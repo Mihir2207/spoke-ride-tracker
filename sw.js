@@ -1,5 +1,5 @@
 // Caches the app shell so Spoke opens without a connection. Map tiles always come from the network.
-const CACHE = 'spoke-v1';
+const CACHE = 'spoke-v2';
 const SHELL = [
   './',
   './index.html',
