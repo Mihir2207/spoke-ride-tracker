@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12302a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Spoke">
+<title>Spoke</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one-screen ride computer. Map fills the top, a stats console sits at the bottom. */
+:root {
+  --bg: #eef2f0;
+  --surface: #ffffff;
+  --fg: #13201d;
+  --muted: #5a6b66;
+  --line: #d9e1de;
+  --accent: #157a5c;
+  --accent-ink: #ffffff;
+  --pause: #a86a12;
+  --danger: #b83b28;
+  --chip: #e3ebe8;
+  --font-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1412;
+    --surface: #151f1c;
+    --fg: #e6eeeb;
+    --muted: #8fa29c;
+    --line: #25322e;
+    --accent: #3cc194;
+    --accent-ink: #06231a;
+    --pause: #e0a43c;
+    --danger: #ef6f5a;
+    --chip: #1e2a27;
+    color-scheme: dark;
+  }
+  .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(.9) contrast(.9); }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.4 var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  padding-bottom: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  z-index: 5;
+}
+.brand {
+  font: 700 22px/1 var(--font-display);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-right: auto;
+}
+.brand span { color: var(--accent); }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--chip);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.good { background: var(--accent); }
+.dot.ok { background: var(--pause); }
+.dot.bad { background: var(--danger); }
+.dot.wait { animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.iconbtn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+.iconbtn:disabled { opacity: .4; cursor: default; }
+
+.mapwrap { position: relative; flex: 1; min-height: 160px; }
+#map { position: absolute; inset: 0; background: var(--bg); }
+.recenter {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: 12px;
+  z-index: 500;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+
+.console {
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 12px;
+  z-index: 5;
+}
+.speed {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.speed b { font-size: 76px; line-height: .9; font-weight: 700; }
+.speed small { font-size: 20px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.speed.idle b { color: var(--muted); }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding-block: 10px;
+}
+.stat { text-align: center; min-width: 0; }
+.stat .v {
+  font: 600 24px/1.05 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat .l {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.controls { display: flex; gap: 10px; flex-wrap: wrap; }
+.controls .prompt { width: 100%; text-align: center; font-weight: 600; }
+.btn {
+  flex: 1;
+  min-height: 56px;
+  border-radius: 14px;
+  border: 0;
+  font: 700 20px/1 var(--font-display);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.btn.go { background: var(--accent); color: var(--accent-ink); }
+.btn.pause { background: var(--pause); color: #fff; }
+.btn.stop { background: var(--danger); color: #fff; }
+.btn.plain { background: var(--chip); color: var(--fg); }
+.btn:active { transform: scale(.98); }
+
+/* History sheet */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.sheet header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.sheet h2 { margin: 0 auto 0 0; font: 700 22px/1 var(--font-display); letter-spacing: .04em; text-transform: uppercase; }
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding-block: 12px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.totals { color: var(--muted); font-size: 13px; padding-bottom: 4px; }
+.ride {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  text-align: left;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.ride .when { font-weight: 600; }
+.ride .km { font: 700 24px/1 var(--font-display); grid-row: span 2; align-self: center; font-variant-numeric: tabular-nums; }
+.ride .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); text-align: center; padding: 40px 12px; }
+
+/* Ride detail */
+.detail-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.detail-title h3 { margin: 0; font: 700 22px/1.1 var(--font-display); }
+.detail-title span { color: var(--muted); font-size: 13px; }
+#chart { width: 100%; height: 120px; display: block; }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 3000;
+  max-width: min(420px, calc(100% - 32px));
+  background: var(--fg);
+  color: var(--bg);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
+.user-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #2b7bf0; border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(43,123,240,.35), 0 1px 4px rgba(0,0,0,.4);
+}
+@media (max-height: 640px) {
+  .speed b { font-size: 60px; }
+  .btn { min-height: 50px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.wait { animation: none; }
+  .btn:active { transform: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Sp<span>o</span>ke</div>
+  <div class="chip" id="gps"><i class="dot" id="gpsDot"></i><span id="gpsText">GPS off</span></div>
+  <button class="iconbtn" id="historyBtn" type="button">Rides</button>
+</div>
+
+<div class="mapwrap">
+  <div id="map"></div>
+  <button class="recenter" id="recenter" type="button" hidden>Follow me</button>
+</div>
+
+<section class="console" id="live">
+  <div class="speed idle" id="speedBox"><b id="speed">0.0</b><small>KM/H</small></div>
+  <div class="stats">
+    <div class="stat"><div class="v" id="sTime">0:00</div><div class="l">Time</div></div>
+    <div class="stat"><div class="v" id="sDist">0.00</div><div class="l">Km</div></div>
+    <div class="stat"><div class="v" id="sAvg">0.0</div><div class="l">Avg km/h</div></div>
+    <div class="stat"><div class="v" id="sMax">0.0</div><div class="l">Max km/h</div></div>
+  </div>
+  <div class="controls" id="controls"></div>
+</section>
+
+<section class="console" id="detail" hidden>
+  <div class="detail-title"><h3 id="dTitle"></h3><span id="dSub"></span></div>
+  <div class="stats">
+    <div class="stat"><div class="v" id="dDist"></div><div class="l">Km</div></div>
+    <div class="stat"><div class="v" id="dTime"></div><div class="l">Time</div></div>
+    <div class="stat"><div class="v" id="dAvg"></div><div class="l">Avg km/h</div></div>
+    <div class="stat"><div class="v" id="dMax"></div><div class="l">Max km/h</div></div>
+  </div>
+  <canvas id="chart" aria-label="Speed over the ride"></canvas>
+  <div class="controls">
+    <button class="btn plain" id="dGpx" type="button">Export GPX</button>
+    <button class="btn plain" id="dDelete" type="button">Delete</button>
+    <button class="btn go" id="dClose" type="button">Done</button>
+  </div>
+</section>
+
+<div class="sheet" id="sheet" hidden>
+  <header>
+    <h2>Your rides</h2>
+    <button class="iconbtn" id="sheetClose" type="button">Close</button>
+  </header>
+  <div class="list" id="list"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(() => {
+  const KEY_RIDES = 'spoke.rides.v1';
+  const KEY_ACTIVE = 'spoke.active.v1';
+  const KEY_LAST = 'spoke.lastpos.v1';
+  const MAX_ACCURACY = 35;   // metres; worse fixes are ignored for the track
+  const MIN_MOVE = 3;        // metres; smaller moves are treated as GPS jitter
+  const MOVING_KMH = 2;      // below this you count as stopped
+  const STALE_MS = 6000;     // no fix for this long -> show 0 km/h
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch {} }
+  };
+
+  // ---------- formatting ----------
+  const fmtDur = ms => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+  };
+  const fmtKm = m => (m / 1000).toFixed(2);
+  const avgKmh = (distM, movingMs) => movingMs > 5000 ? (distM / 1000) / (movingMs / 3600000) : 0;
+  const fmtDate = t => new Date(t).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const fmtClock = t => new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  function dist(a, b) {
+    const R = 6371000, r = Math.PI / 180;
+    const dLa = (b[0] - a[0]) * r, dLn = (b[1] - a[1]) * r;
+    const s = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLn / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  let toastTimer;
+  function toast(msg, ms = 4000) {
+    const t = $('toast');
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+
+  // ---------- map ----------
+  const last = store.get(KEY_LAST, null);
+  const map = L.map('map', { zoomControl: false, attributionControl: true })
+    .setView(last ? [last[0], last[1]] : [20, 78], last ? 15 : 4);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  const routeColor = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#157a5c';
+  const liveLayer = L.layerGroup().addTo(map);
+  const detailLayer = L.layerGroup().addTo(map);
+  let liveLines = [];
+  let userMarker = null;
+  let follow = true;
+  map.on('dragstart', () => { if (ride) { follow = false; $('recenter').hidden = false; } });
+  $('recenter').onclick = () => {
+    follow = true; $('recenter').hidden = true;
+    if (lastFix) map.setView([lastFix.lat, lastFix.lng], Math.max(map.getZoom(), 16));
+  };
+
+  function showUser(lat, lng) {
+    if (!userMarker) {
+      userMarker = L.marker([lat, lng], {
+        icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+        interactive: false, keyboard: false
+      }).addTo(map);
+    } else userMarker.setLatLng([lat, lng]);
+  }
+
+  function lineFor(seg) {
+    if (!liveLines[seg]) liveLines[seg] = L.polyline([], { color: routeColor(), weight: 5, opacity: .9 }).addTo(liveLayer);
+    return liveLines[seg];
+  }
+  function redrawLive() {
+    liveLayer.clearLayers(); liveLines = [];
+    if (!ride) return;
+    for (const p of ride.points) lineFor(p[4]).addLatLng([p[0], p[1]]);
+  }
+
+  // ---------- ride state ----------
+  // point = [lat, lng, timestamp, kmh, segment]; a new segment starts after each pause
+  let ride = store.get(KEY_ACTIVE, null);
+  let confirming = false;
+  let discardArmed = false;
+  let watchId = null;
+  let lastFix = null;
+  let curSpeed = 0;
+  let wakeLock = null;
+
+  const elapsed = () => ride ? ride.accMs + (ride.status === 'recording' ? Date.now() - ride.runFrom : 0) : 0;
+  const saveActive = () => { if (ride) store.set(KEY_ACTIVE, ride); };
+
+  function setGps(state, text) {
+    $('gpsDot').className = 'dot ' + state;
+    $('gpsText').textContent = text;
+  }
+
+  function onPosition(pos) {
+    const { latitude: lat, longitude: lng, accuracy, speed } = pos.coords;
+    const t = pos.timestamp || Date.now();
+    const acc = Math.round(accuracy);
+    setGps(acc <= 15 ? 'good' : acc <= MAX_ACCURACY ? 'ok' : 'bad', `GPS ±${acc} m`);
+    lastFix = { lat, lng, t, accuracy };
+    showUser(lat, lng);
+    if (follow && !viewing) map.setView([lat, lng], Math.max(map.getZoom(), 16), { animate: true });
+    store.set(KEY_LAST, [lat, lng]);
+
+    if (!ride || ride.status !== 'recording' || accuracy > MAX_ACCURACY) return;
+
+    const pts = ride.points;
+    const prev = pts[pts.length - 1];
+    let kmh = speed != null && speed >= 0 ? speed * 3.6 : null;
+
+    if (prev && prev[4] === ride.seg) {
+      const d = dist(prev, [lat, lng]);
+      const dt = (t - prev[2]) / 1000;
+      if (dt <= 0) return;
+      const derived = d / dt * 3.6;
+      if (derived > 120) return;  // GPS jump, not a real move
+      if (d < Math.max(MIN_MOVE, accuracy * 0.4)) {
+        curSpeed = kmh != null && kmh >= MOVING_KMH ? kmh : 0;
+        render();
+        return;
+      }
+      if (kmh == null) kmh = derived;
+      ride.distM += d;
+      if (kmh >= MOVING_KMH && dt < 30) ride.movingMs += dt * 1000;
+      if (kmh > ride.maxKmh && accuracy <= 20) ride.maxKmh = kmh;
+    } else if (kmh == null) kmh = 0;
+
+    pts.push([+lat.toFixed(6), +lng.toFixed(6), t, +kmh.toFixed(1), ride.seg]);
+    lineFor(ride.seg).addLatLng([lat, lng]);
+    curSpeed = kmh;
+    saveActive();
+    render();
+  }
+
+  function onPosError(err) {
+    if (err.code === 1) {
+      setGps('bad', 'Location blocked');
+      toast('Location is blocked. Allow location for this site in your browser settings, then tap Start again.', 7000);
+      stopWatch();
+      if (ride && ride.points.length === 0) { ride = null; store.del(KEY_ACTIVE); }
+      render();
+    } else {
+      setGps('bad wait', 'Finding GPS…');
+    }
+  }
+
+  function startWatch() {
+    if (watchId != null) return;
+    if (!('geolocation' in navigator)) { toast('This browser cannot read your location.'); return; }
+    setGps('wait', 'Finding GPS…');
+    watchId = navigator.geolocation.watchPosition(onPosition, onPosError, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  }
+  function stopWatch() {
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    setGps('', 'GPS off');
+  }
+
+  async function lockScreen() {
+    try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch {}
+  }
+  function unlockScreen() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && ride && ride.status === 'recording') lockScreen();
+  });
+  window.addEventListener('beforeunload', e => { if (ride && ride.status === 'recording') { e.preventDefault(); e.returnValue = ''; } });
+
+  // ---------- actions ----------
+  function start() {
+    const now = Date.now();
+    ride = { id: now.toString(36), start: now, points: [], seg: 0, accMs: 0, runFrom: now, status: 'recording', distM: 0, movingMs: 0, maxKmh: 0 };
+    curSpeed = 0; follow = true; $('recenter').hidden = true;
+    redrawLive(); startWatch(); lockScreen(); saveActive(); render();
+  }
+  function pause() {
+    if (ride.status !== 'recording') return;
+    ride.accMs += Date.now() - ride.runFrom;
+    ride.status = 'paused'; ride.seg += 1; curSpeed = 0;
+    saveActive(); render();
+  }
+  function resume() {
+    ride.status = 'recording'; ride.runFrom = Date.now();
+    confirming = false; discardArmed = false;
+    startWatch(); lockScreen(); saveActive(); render();
+  }
+  function stop() { pause(); confirming = true; discardArmed = false; render(); }
+  function finish() {
+    confirming = false; ride = null; curSpeed = 0;
+    store.del(KEY_ACTIVE); stopWatch(); unlockScreen(); redrawLive(); render();
+  }
+  function save() {
+    const rec = {
+      id: ride.id, start: ride.start, end: Date.now(), durMs: ride.accMs,
+      distM: Math.round(ride.distM), movingMs: Math.round(ride.movingMs), maxKmh: +ride.maxKmh.toFixed(1),
+      points: ride.points
+    };
+    const rides = store.get(KEY_RIDES, []);
+    rides.push(rec);
+    if (!store.set(KEY_RIDES, rides)) {
+      toast('Phone storage for this app is full. Export old rides as GPX and delete them, then save again.', 8000);
+      return;
+    }
+    finish();
+    toast(`Ride saved: ${fmtKm(rec.distM)} km in ${fmtDur(rec.durMs)}.`);
+  }
+  function discard() {
+    if (!discardArmed) { discardArmed = true; render(); return; }
+    finish(); toast('Ride discarded.');
+  }
+
+  $('controls').addEventListener('click', e => {
+    const a = e.target.closest('[data-a]')?.dataset.a;
+    ({ start, pause, resume, stop, save, discard, keep: resume })[a]?.();
+  });
+
+  // ---------- live render ----------
+  function render() {
+    const st = ride ? ride.status : 'idle';
+    $('speedBox').classList.toggle('idle', st !== 'recording');
+    $('speed').textContent = (st === 'recording' ? curSpeed : 0).toFixed(1);
+    $('sTime').textContent = fmtDur(elapsed());
+    $('sDist').textContent = fmtKm(ride ? ride.distM : 0);
+    $('sAvg').textContent = avgKmh(ride ? ride.distM : 0, ride ? ride.movingMs : 0).toFixed(1);
+    $('sMax').textContent = (ride ? ride.maxKmh : 0).toFixed(1);
+    $('historyBtn').disabled = !!ride;
+
+    const key = `${st}|${confirming}|${discardArmed}`;
+    const c = $('controls');
+    if (c.dataset.key === key) return;
+    c.dataset.key = key;
+    if (confirming) {
+      c.innerHTML = `<div class="prompt">Save this ride?</div>
+        <button class="btn go" data-a="save" type="button">Save</button>
+        <button class="btn ${discardArmed ? 'stop' : 'plain'}" data-a="discard" type="button">${discardArmed ? 'Tap to confirm' : 'Discard'}</button>
+        <button class="btn plain" data-a="keep" type="button">Keep riding</button>`;
+    } else if (st === 'recording') {
+      c.innerHTML = `<button class="btn pause" data-a="pause" type="button">Pause</button>
+        <button class="btn stop" data-a="stop" type="button">Stop</button>`;
+    } else if (st === 'paused') {
+      c.innerHTML = `<button class="btn go" data-a="resume" type="button">Resume</button>
+        <button class="btn stop" data-a="stop" type="button">Stop</button>`;
+    } else {
+      c.innerHTML = `<button class="btn go" data-a="start" type="button">Start ride</button>`;
+    }
+  }
+
+  setInterval(() => {
+    if (ride && ride.status === 'recording' && (!lastFix || Date.now() - lastFix.t > STALE_MS)) curSpeed = 0;
+    if (ride) render();
+  }, 1000);
+
+  // ---------- history ----------
+  let viewing = null;
+  let deleteArmed = false;
+
+  function openHistory() {
+    const rides = store.get(KEY_RIDES, []).slice().sort((a, b) => b.start - a.start);
+    const list = $('list');
+    if (!rides.length) {
+      list.innerHTML = '<div class="empty">No rides yet. Tap <b>Start ride</b> on the main screen before you set off, and your route and stats will be saved here.</div>';
+    } else {
+      const totKm = rides.reduce((s, r) => s + r.distM, 0);
+      const totMs = rides.reduce((s, r) => s + r.durMs, 0);
+      list.innerHTML = `<div class="totals">${rides.length} ride${rides.length > 1 ? 's' : ''} · ${fmtKm(totKm)} km · ${fmtDur(totMs)} total</div>` +
+        rides.map(r => `<button class="ride" type="button" data-id="${r.id}">
+          <span class="when">${fmtDate(r.start)}</span>
+          <span class="km">${fmtKm(r.distM)} km</span>
+          <span class="meta">${fmtClock(r.start)} · ${fmtDur(r.durMs)} · avg ${avgKmh(r.distM, r.movingMs).toFixed(1)} km/h</span>
+        </button>`).join('');
+    }
+    $('sheet').hidden = false;
+  }
+  $('historyBtn').onclick = openHistory;
+  $('sheetClose').onclick = () => { $('sheet').hidden = true; };
+  $('list').addEventListener('click', e => {
+    const id = e.target.closest('.ride')?.dataset.id;
+    const r = id && store.get(KEY_RIDES, []).find(x => x.id === id);
+    if (r) { $('sheet').hidden = true; openDetail(r); }
+  });
+
+  function openDetail(r) {
+    viewing = r; deleteArmed = false;
+    $('dDelete').textContent = 'Delete'; $('dDelete').className = 'btn plain';
+    $('live').hidden = true; $('detail').hidden = false;
+    $('dTitle').textContent = fmtDate(r.start);
+    $('dSub').textContent = `${fmtClock(r.start)} – ${fmtClock(r.end)}`;
+    $('dDist').textContent = fmtKm(r.distM);
+    $('dTime').textContent = fmtDur(r.durMs);
+    $('dAvg').textContent = avgKmh(r.distM, r.movingMs).toFixed(1);
+    $('dMax').textContent = r.maxKmh.toFixed(1);
+
+    liveLayer.remove();
+    detailLayer.clearLayers();
+    const segs = {};
+    for (const p of r.points) (segs[p[4]] ||= []).push([p[0], p[1]]);
+    const all = [];
+    for (const k in segs) { L.polyline(segs[k], { color: routeColor(), weight: 5, opacity: .9 }).addTo(detailLayer); all.push(...segs[k]); }
+    if (all.length) {
+      L.circleMarker(all[0], { radius: 7, color: '#fff', weight: 2, fillColor: '#2f9e44', fillOpacity: 1 }).addTo(detailLayer);
+      L.circleMarker(all[all.length - 1], { radius: 7, color: '#fff', weight: 2, fillColor: '#d6336c', fillOpacity: 1 }).addTo(detailLayer);
+    }
+    requestAnimationFrame(() => {
+      map.invalidateSize();
+      if (all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [24, 24] });
+      else if (all.length) map.setView(all[0], 16);
+      drawChart($('chart'), r.points);
+    });
+  }
+  function closeDetail() {
+    viewing = null;
+    detailLayer.clearLayers(); liveLayer.addTo(map);
+    $('detail').hidden = true; $('live').hidden = false;
+    requestAnimationFrame(() => map.invalidateSize());
+  }
+  $('dClose').onclick = closeDetail;
+  $('dDelete').onclick = () => {
+    if (!deleteArmed) { deleteArmed = true; $('dDelete').textContent = 'Tap to confirm'; $('dDelete').className = 'btn stop'; return; }
+    store.set(KEY_RIDES, store.get(KEY_RIDES, []).filter(x => x.id !== viewing.id));
+    closeDetail(); toast('Ride deleted.');
+  };
+  $('dGpx').onclick = () => exportGpx(viewing);
+
+  function exportGpx(r) {
+    const segs = {};
+    for (const p of r.points) (segs[p[4]] ||= []).push(p);
+    const body = Object.values(segs).map(s => '<trkseg>\n' +
+      s.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}"><time>${new Date(p[2]).toISOString()}</time></trkpt>`).join('\n') +
+      '\n</trkseg>').join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Spoke" xmlns="http://www.topografix.com/GPX/1/1">
+<trk><name>Ride ${new Date(r.start).toISOString().slice(0, 10)}</name><type>cycling</type>
+${body}
+</trk>
+</gpx>`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([xml], { type: 'application/gpx+xml' }));
+    a.download = `ride-${new Date(r.start).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.gpx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  function drawChart(canvas, pts) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const c = canvas.getContext('2d');
+    c.scale(dpr, dpr);
+    const cs = getComputedStyle(document.documentElement);
+    const tok = n => cs.getPropertyValue(n).trim();
+    c.font = '12px Barlow, system-ui, sans-serif';
+    if (pts.length < 2) {
+      c.fillStyle = tok('--muted');
+      c.fillText('Not enough GPS points for a speed graph.', 4, h / 2);
+      return;
+    }
+    // x = riding time (pauses removed), y = speed smoothed over 5 points
+    const xs = [], ys = [];
+    let x = 0;
+    pts.forEach((p, i) => {
+      if (i > 0 && p[4] === pts[i - 1][4]) x += p[2] - pts[i - 1][2];
+      xs.push(x);
+      const lo = Math.max(0, i - 2), hi = Math.min(pts.length, i + 3);
+      let s = 0; for (let j = lo; j < hi; j++) s += pts[j][3];
+      ys.push(s / (hi - lo));
+    });
+    const maxY = Math.max(10, ...ys);
+    const step = maxY > 40 ? 20 : maxY > 20 ? 10 : 5;
+    const top = Math.ceil(maxY / step) * step;
+    const L0 = 28, R0 = 4, T0 = 6, B0 = 18;
+    const pw = w - L0 - R0, ph = h - T0 - B0;
+    const X = v => L0 + (xs[xs.length - 1] ? v / xs[xs.length - 1] : 0) * pw;
+    const Y = v => T0 + ph - (v / top) * ph;
+
+    c.strokeStyle = tok('--line'); c.fillStyle = tok('--muted'); c.lineWidth = 1;
+    c.textAlign = 'right'; c.textBaseline = 'middle';
+    for (let v = 0; v <= top; v += step) {
+      c.beginPath(); c.moveTo(L0, Y(v) + .5); c.lineTo(w - R0, Y(v) + .5); c.stroke();
+      c.fillText(v, L0 - 6, Y(v));
+    }
+    c.textBaseline = 'alphabetic';
+    c.textAlign = 'left'; c.fillText('0:00', L0, h - 3);
+    c.textAlign = 'right'; c.fillText(fmtDur(xs[xs.length - 1]), w - R0, h - 3);
+
+    const accent = tok('--accent');
+    c.beginPath(); c.moveTo(X(xs[0]), Y(0));
+    xs.forEach((v, i) => c.lineTo(X(v), Y(ys[i])));
+    c.lineTo(X(xs[xs.length - 1]), Y(0)); c.closePath();
+    c.globalAlpha = .18; c.fillStyle = accent; c.fill(); c.globalAlpha = 1;
+    c.beginPath();
+    xs.forEach((v, i) => i ? c.lineTo(X(v), Y(ys[i])) : c.moveTo(X(v), Y(ys[i])));
+    c.strokeStyle = accent; c.lineWidth = 2; c.lineJoin = 'round'; c.stroke();
+  }
+
+  // ---------- boot ----------
+  if (ride) {
+    // reopened mid-ride: redraw the track and keep going
+    redrawLive();
+    if (ride.points.length) {
+      const p = ride.points[ride.points.length - 1];
+      map.setView([p[0], p[1]], 16);
+    }
+    startWatch();
+    if (ride.status === 'recording') lockScreen();
+    toast('Your ride in progress was restored.');
+  }
+  render();
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
